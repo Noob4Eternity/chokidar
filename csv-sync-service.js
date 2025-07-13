@@ -21,7 +21,7 @@ class CSVSyncService {
     this.initializeSupabase();
     this.initializeConfig();
     this.isProcessing = false;
-    this.processedHashes = new Set(); // Track processed row hashes instead of file size
+    this.processedHashes = new Set(); // Track processed row hashes to avoid duplicates
     this.watcher = null;
   }
 
@@ -108,8 +108,8 @@ class CSVSyncService {
       // Start file watcher
       this.startFileWatcher();
 
-      this.logger.info('CSV Sync Service started - monitoring for new ID scanner entries only');
-      this.logger.info('Existing CSV data will be ignored - only new scans will be processed');
+      this.logger.info('CSV Sync Service started - monitoring for new ID scanner entries');
+      this.logger.info('Service will process the entry with the latest timestamp each time the file changes');
 
     } catch (error) {
       this.logger.error('Failed to start service:', error);
@@ -237,7 +237,7 @@ class CSVSyncService {
     });
 
     this.watcher.on('change', (filePath) => {
-      this.logger.info(`CSV file changed: ${filePath} - processing latest row`);
+      this.logger.info(`CSV file changed: ${filePath} - processing entry with latest timestamp`);
       this.processCSVFile();
     });
 
@@ -245,12 +245,12 @@ class CSVSyncService {
       this.logger.error('File watcher error:', error);
     });
 
-    this.logger.info(`File watcher started for: ${this.config.csvFilePath} (monitoring changes only)`);
+    this.logger.info(`File watcher started for: ${this.config.csvFilePath} (latest timestamp processing)`);
   }
 
   /**
    * Process CSV file and sync new data to Supabase
-   * Only processes the last row when file changes are detected
+   * Finds and processes only the entry with the latest timestamp
    */
   async processCSVFile() {
     if (this.isProcessing) {
@@ -264,14 +264,16 @@ class CSVSyncService {
     }
 
     this.isProcessing = true;
-    this.logger.info('Processing latest CSV entry - checking last row only', { filePath: this.config.csvFilePath });
+    this.logger.info('Finding entry with latest timestamp in CSV file', { 
+      filePath: this.config.csvFilePath
+    });
 
     const startTime = Date.now();
 
     try {
       const rows = [];
       
-      // Read all rows from CSV to get the last one
+      // Read all rows from CSV
       await new Promise((resolve, reject) => {
         const stream = fs.createReadStream(this.config.csvFilePath)
           .pipe(csv())
@@ -287,66 +289,93 @@ class CSVSyncService {
         return;
       }
 
-      // Get the last row (most recently added by ID scanner)
-      const lastRow = rows[rows.length - 1];
-      const customerData = this.transformCustomerData(lastRow);
-      
-      // Skip if the last row is empty
-      if (!customerData) {
-        this.logger.info('Latest row contains no valid customer data');
-        return;
-      }
+      this.logger.info(`Found ${rows.length} total rows in CSV, looking for latest timestamp`);
 
-      const rowHash = this.generateRowHash(customerData);
-      
-      // Check if we've already processed this exact row
-      if (this.processedHashes.has(rowHash)) {
-        this.logger.info('Latest row already processed, no new data to sync', { 
-          name: `${customerData.first_name} ${customerData.last_name}`,
-          hash: rowHash 
-        });
-        return;
-      }
+      // Find the row with the latest timestamp
+      let latestRow = null;
+      let latestTimestamp = null;
 
-      this.logger.info('Processing new customer from latest scan', { 
-        name: `${customerData.first_name} ${customerData.last_name}`,
-        driversLicenseNo: customerData.drivers_license_no,
-        hash: rowHash,
-        rowNumber: rows.length
-      });
+      for (const row of rows) {
+        // Skip empty rows
+        const customerData = this.transformCustomerData(row);
+        if (!customerData) {
+          continue;
+        }
 
-      // Insert customer data
-      const result = await this.insertCustomerWithRetry(customerData);
-      
-      if (result.success) {
-        if (result.duplicate) {
-          this.logger.info('Customer from latest scan already exists in database', {
+        // Parse the timestamp from the CREATED field
+        const entryTimestamp = this.parseTimestamp(row['CREATED']);
+        if (!entryTimestamp) {
+          this.logger.warn('Row has invalid or missing timestamp, skipping', {
             name: `${customerData.first_name} ${customerData.last_name}`,
-            driversLicenseNo: customerData.drivers_license_no
+            created: row['CREATED']
           });
-        } else {
-          this.logger.info('✅ Successfully inserted new customer from latest scan', {
+          continue;
+        }
+
+        // Check if this is the latest timestamp we've seen
+        if (!latestTimestamp || entryTimestamp > latestTimestamp) {
+          latestTimestamp = entryTimestamp;
+          latestRow = row;
+        }
+      }
+
+      // Process the latest entry if found
+      if (latestRow && latestTimestamp) {
+        const customerData = this.transformCustomerData(latestRow);
+        const rowHash = this.generateRowHash(customerData);
+
+        // Check if we've already processed this exact row
+        if (this.processedHashes.has(rowHash)) {
+          this.logger.info('Latest entry already processed, no new data to sync', { 
             name: `${customerData.first_name} ${customerData.last_name}`,
-            driversLicenseNo: customerData.drivers_license_no
+            timestamp: latestTimestamp.toISOString()
+          });
+          return;
+        }
+
+        this.logger.info('Processing latest customer entry', { 
+          name: `${customerData.first_name} ${customerData.last_name}`,
+          driversLicenseNo: customerData.drivers_license_no,
+          timestamp: latestTimestamp.toISOString()
+        });
+
+        // Insert the customer data
+        const result = await this.insertCustomerWithRetry(customerData);
+        
+        if (result.success) {
+          if (result.duplicate) {
+            this.logger.info('Latest customer already exists in database', {
+              name: `${customerData.first_name} ${customerData.last_name}`,
+              driversLicenseNo: customerData.drivers_license_no
+            });
+          } else {
+            this.logger.info('✅ Successfully inserted latest customer entry', {
+              name: `${customerData.first_name} ${customerData.last_name}`,
+              driversLicenseNo: customerData.drivers_license_no,
+              timestamp: latestTimestamp.toISOString()
+            });
+          }
+          
+          // Mark this row as processed
+          this.processedHashes.add(rowHash);
+          this.saveProcessedHashes();
+        } else {
+          this.logger.error('❌ Failed to process latest customer entry', { 
+            name: `${customerData.first_name} ${customerData.last_name}`,
+            error: result.error 
           });
         }
-        
-        // Mark this row as processed
-        this.processedHashes.add(rowHash);
-        this.saveProcessedHashes();
-      } else {
-        this.logger.error('❌ Failed to process customer from latest scan', { 
-          name: `${customerData.first_name} ${customerData.last_name}`,
-          error: result.error 
-        });
-      }
 
-      const processingTime = Date.now() - startTime;
-      this.logger.info('Latest CSV entry processed', {
-        success: result.success,
-        duplicate: result.duplicate,
-        processingTimeMs: processingTime
-      });
+        const processingTime = Date.now() - startTime;
+        this.logger.info('Latest entry processing completed', {
+          success: result.success,
+          duplicate: result.duplicate,
+          timestamp: latestTimestamp.toISOString(),
+          processingTimeMs: processingTime
+        });
+      } else {
+        this.logger.warn('No valid entries with timestamps found in CSV file');
+      }
 
     } catch (error) {
       this.logger.error('Error processing latest CSV entry', { 
@@ -478,6 +507,28 @@ class CSVSyncService {
       return isNaN(date.getTime()) ? null : date.toISOString();
     } catch (error) {
       this.logger.warn(`Error parsing datetime: ${dateTimeString}`, { error: error.message });
+      return null;
+    }
+  }
+
+  /**
+   * Parse timestamp from CSV CREATED field for comparison
+   * Returns a comparable timestamp (Date object)
+   */
+  parseTimestamp(timestampString) {
+    if (!timestampString) return null;
+    
+    try {
+      // Handle the scanner format: "2025/07/10 11:20:07 (Thu Jul 10)"
+      let cleanTimestamp = timestampString;
+      if (timestampString.includes('(')) {
+        cleanTimestamp = timestampString.split('(')[0].trim();
+      }
+      
+      const date = new Date(cleanTimestamp);
+      return isNaN(date.getTime()) ? null : date;
+    } catch (error) {
+      this.logger.warn(`Error parsing timestamp: ${timestampString}`, { error: error.message });
       return null;
     }
   }
