@@ -7,6 +7,7 @@ const svc = new Service({
   name: process.env.SERVICE_NAME || 'PawnShopCSVSync',
   description: process.env.SERVICE_DESCRIPTION || 'Monitors CSV file from ID scanner and syncs customer data to Supabase',
   script: path.join(__dirname, 'csv-sync-service.js'),
+  workingDirectory: __dirname,
   nodeOptions: [
     '--max_old_space_size=2048'
   ],
@@ -14,6 +15,10 @@ const svc = new Service({
     {
       name: "NODE_ENV",
       value: "production"
+    },
+    {
+      name: "SERVICE_WORKING_DIR",
+      value: __dirname
     }
   ]
 });

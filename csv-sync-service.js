@@ -6,7 +6,10 @@ const { createClient } = require('@supabase/supabase-js');
 const winston = require('winston');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
-require('dotenv').config();
+
+// Ensure we load .env from the correct directory when running as a service
+const serviceWorkingDir = process.env.SERVICE_WORKING_DIR || __dirname;
+require('dotenv').config({ path: path.join(serviceWorkingDir, '.env') });
 
 /**
  * Pawn Shop CSV Sync Service
