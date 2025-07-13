@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pawn Shop Customer Dashboard</title>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            padding: 30px;
+            background: #f8f9fa;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+            text-align: center;
+            transition: transform 0.3s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 1.1rem;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-connected {
+            background: #27ae60;
+        }
+
+        .status-disconnected {
+            background: #e74c3c;
+        }
+
+        .customers-section {
+            padding: 30px;
+        }
+
+        .section-title {
+            font-size: 1.8rem;
+            margin-bottom: 20px;
+            color: #2c3e50;
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .customers-grid {
+            display: grid;
+            gap: 15px;
+        }
+
+        .customer-card {
+            background: white;
+            border: 1px solid #e1e8ed;
+            border-radius: 10px;
+            padding: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .customer-card:hover {
+            border-color: #667eea;
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.15);
+        }
+
+        .customer-name {
+            font-size: 1.3rem;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+
+        .customer-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            color: #666;
+        }
+
+        .customer-detail {
+            display: flex;
+            align-items: center;
+        }
+
+        .customer-detail strong {
+            margin-right: 8px;
+            color: #2c3e50;
+        }
+
+        .timestamp {
+            color: #95a5a6;
+            font-size: 0.9rem;
+            font-style: italic;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .error {
+            background: #fff5f5;
+            border: 1px solid #fed7d7;
+            color: #c53030;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px;
+        }
+
+        .refresh-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 1rem;
+            margin: 20px;
+            transition: transform 0.3s ease;
+        }
+
+        .refresh-btn:hover {
+            transform: translateY(-2px);
+        }
+
+        .real-time-indicator {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="real-time-indicator">
+        <span class="status-indicator" id="connectionStatus"></span>
+        <span id="connectionText">Connecting...</span>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <h1>🏪 Pawn Shop Customer Dashboard</h1>
+            <p>Real-time customer data from ID scanner</p>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-number" id="totalCustomers">-</div>
+                <div class="stat-label">Total Customers</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="customersToday">-</div>
+                <div class="stat-label">Scanned Today</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="customersThisWeek">-</div>
+                <div class="stat-label">This Week</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="customersThisMonth">-</div>
+                <div class="stat-label">This Month</div>
+            </div>
+        </div>
+
+        <div class="customers-section">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h2 class="section-title">Recent Customers</h2>
+                <button class="refresh-btn" onclick="loadCustomers()">🔄 Refresh</button>
+            </div>
+            
+            <div id="customersContainer">
+                <div class="loading">Loading customer data...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration - Replace with your actual Supabase credentials
+        const SUPABASE_URL = 'your_supabase_project_url';
+        const SUPABASE_ANON_KEY = 'your_supabase_anon_key';
+
+        // Initialize Supabase client
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        let subscription = null;
+
+        // Initialize the dashboard
+        async function initDashboard() {
+            try {
+                await loadStats();
+                await loadCustomers();
+                setupRealTimeSubscription();
+                updateConnectionStatus(true);
+            } catch (error) {
+                console.error('Failed to initialize dashboard:', error);
+                showError('Failed to connect to database. Please check your configuration.');
+                updateConnectionStatus(false);
+            }
+        }
+
+        // Load customer statistics
+        async function loadStats() {
+            try {
+                const { data, error } = await supabase
+                    .from('customer_stats')
+                    .select('*')
+                    .single();
+
+                if (error) throw error;
+
+                document.getElementById('totalCustomers').textContent = data.total_customers || 0;
+                document.getElementById('customersToday').textContent = data.customers_today || 0;
+                document.getElementById('customersThisWeek').textContent = data.customers_this_week || 0;
+                document.getElementById('customersThisMonth').textContent = data.customers_this_month || 0;
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        // Load recent customers
+        async function loadCustomers() {
+            try {
+                const { data, error } = await supabase
+                    .from('customers_testing')
+                    .select(`
+                        id,
+                        first_name,
+                        last_name,
+                        phone,
+                        drivers_license_no,
+                        full_address,
+                        city,
+                        state,
+                        synced_at,
+                        scanner_created_at
+                    `)
+                    .order('synced_at', { ascending: false })
+                    .limit(20);
+
+                if (error) throw error;
+
+                displayCustomers(data || []);
+            } catch (error) {
+                console.error('Error loading customers:', error);
+                showError('Failed to load customer data.');
+            }
+        }
+
+        // Display customers in the UI
+        function displayCustomers(customers) {
+            const container = document.getElementById('customersContainer');
+            
+            if (customers.length === 0) {
+                container.innerHTML = '<div class="loading">No customers found.</div>';
+                return;
+            }
+
+            const html = customers.map(customer => `
+                <div class="customer-card">
+                    <div class="customer-name">
+                        ${customer.first_name || ''} ${customer.last_name || ''}
+                    </div>
+                    <div class="customer-details">
+                        <div class="customer-detail">
+                            <strong>License:</strong> ${customer.drivers_license_no || 'N/A'}
+                        </div>
+                        <div class="customer-detail">
+                            <strong>Phone:</strong> ${customer.phone || 'N/A'}
+                        </div>
+                        <div class="customer-detail">
+                            <strong>Address:</strong> ${formatAddress(customer)}
+                        </div>
+                        <div class="customer-detail">
+                            <strong>Scanned:</strong> <span class="timestamp">${formatDateTime(customer.scanner_created_at)}</span>
+                        </div>
+                        <div class="customer-detail">
+                            <strong>Synced:</strong> <span class="timestamp">${formatDateTime(customer.synced_at)}</span>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+
+            container.innerHTML = `<div class="customers-grid">${html}</div>`;
+        }
+
+        // Format address for display
+        function formatAddress(customer) {
+            if (customer.full_address) {
+                return customer.full_address;
+            }
+            
+            const parts = [customer.city, customer.state].filter(Boolean);
+            return parts.length > 0 ? parts.join(', ') : 'N/A';
+        }
+
+        // Format datetime for display
+        function formatDateTime(dateString) {
+            if (!dateString) return 'N/A';
+            
+            const date = new Date(dateString);
+            return date.toLocaleString('en-US', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
+        // Setup real-time subscription for new customers
+        function setupRealTimeSubscription() {
+            subscription = supabase
+                .channel('customers_testing')
+                .on(
+                    'postgres_changes',
+                    {
+                        event: 'INSERT',
+                        schema: 'public',
+                        table: 'customers_testing'
+                    },
+                    (payload) => {
+                        console.log('New customer added:', payload.new);
+                        showNotification(`New customer: ${payload.new.first_name} ${payload.new.last_name}`);
+                        loadStats();
+                        loadCustomers();
+                    }
+                )
+                .subscribe((status) => {
+                    console.log('Subscription status:', status);
+                    updateConnectionStatus(status === 'SUBSCRIBED');
+                });
+        }
+
+        // Update connection status indicator
+        function updateConnectionStatus(connected) {
+            const statusElement = document.getElementById('connectionStatus');
+            const textElement = document.getElementById('connectionText');
+            
+            if (connected) {
+                statusElement.className = 'status-indicator status-connected';
+                textElement.textContent = 'Connected';
+            } else {
+                statusElement.className = 'status-indicator status-disconnected';
+                textElement.textContent = 'Disconnected';
+            }
+        }
+
+        // Show error message
+        function showError(message) {
+            const container = document.getElementById('customersContainer');
+            container.innerHTML = `<div class="error">⚠️ ${message}</div>`;
+        }
+
+        // Show notification for new customers
+        function showNotification(message) {
+            if ('Notification' in window && Notification.permission === 'granted') {
+                new Notification('Pawn Shop - New Customer', {
+                    body: message,
+                    icon: '🏪'
+                });
+            }
+        }
+
+        // Request notification permission
+        function requestNotificationPermission() {
+            if ('Notification' in window && Notification.permission === 'default') {
+                Notification.requestPermission();
+            }
+        }
+
+        // Initialize dashboard when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            requestNotificationPermission();
+            initDashboard();
+        });
+
+        // Cleanup subscription when page unloads
+        window.addEventListener('beforeunload', () => {
+            if (subscription) {
+                subscription.unsubscribe();
+            }
+        });
+    </script>
+</body>
+</html>
