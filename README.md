@@ -48,24 +48,22 @@ A complete Node.js service that monitors a local CSV file from an ID scanning ma
 ## 📊 Features
 
 ### Core Functionality
-- **File Monitoring**: Uses chokidar with polling to monitor CSV file changes
+- **Latest Entry Processing**: Detects CSV file changes and processes the entry with the most recent timestamp
 - **Data Parsing**: Processes CSV data with proper validation and transformation
-- **Duplicate Prevention**: Checks for existing customers using driver's license number
-- **Batch Processing**: Handles large CSV files efficiently with configurable batch sizes
-- **Error Handling**: Comprehensive error handling with retry logic
+- **Duplicate Prevention**: Uses hash-based tracking to prevent reprocessing the same customer
+- **Error Handling**: Comprehensive error handling with retry logic and detailed logging
 - **Logging**: Detailed logging with Winston to file and console
 
 ### Windows Service
 - **Auto-start**: Automatically starts on Windows boot
-- **Service Management**: Easy install/uninstall scripts
+- **Service Management**: Easy install/uninstall with npm commands
 - **Background Operation**: Runs silently in the background
 - **Event Logging**: Integrates with Windows Event Viewer
 
 ### Real-time Features
-- **Supabase Integration**: Real-time database updates
-- **Web Dashboard**: Live customer dashboard with subscriptions
-- **Notifications**: Browser notifications for new customers
-- **Statistics**: Real-time customer statistics and metrics
+- **Supabase Integration**: Real-time database updates to customers_testing table
+- **Timestamp-based Detection**: Uses CSV CREATED field to identify the newest entry
+- **State Persistence**: Remembers processed entries across service restarts
 
 ## 📁 File Structure
 
@@ -73,28 +71,26 @@ A complete Node.js service that monitors a local CSV file from an ID scanning ma
 pawnshop-csv-sync-service/
 ├── csv-sync-service.js      # Main service file
 ├── install-service.js       # Windows service installer
-├── uninstall-service.js     # Windows service uninstaller
-├── test-service.js          # Service testing script
+├── manage.bat              # Service management console
 ├── web-dashboard.html       # Customer dashboard web app
-├── customer-api-example.js  # API integration examples
-├── validate-config.js       # Configuration validator
-├── package.json            # Node.js dependencies
+├── supabase-schema.sql     # Database schema and setup
+├── package.json            # Node.js dependencies and scripts
 ├── .env.example            # Environment variables template
 └── README.md              # This file
 ```
 
 ## 🗄️ Database Requirements
 
-The service expects a `customers_testing` table in your Supabase database with the following structure:
+The service expects a `customers_testing` table in your Supabase database. Use the provided `supabase-schema.sql` file to create the required tables and views.
 
-- **Personal Information**: first_name, last_name, lastname_alt, birthdate, age
+Key fields:
+- **Personal Information**: first_name, last_name, birthdate, age
 - **Contact Information**: full_address, city, state, postal_code, country, phone
 - **License Information**: drivers_license_no, license_issued_on, license_expires_on
-- **Insurance Information**: insurance_id_no, insurance_company_code, insurance_member_no
-- **System Fields**: scanner_created_at, user_field_1, user_field_2, notes
+- **System Fields**: scanner_created_at, notes
 - **Tracking Fields**: synced_at, created_at, updated_at
 
-The service uses the `drivers_license_no` field for duplicate detection.
+The service uses hash-based duplicate detection to prevent reprocessing the same customer entry.
 
 ## 🔧 Configuration
 
@@ -104,11 +100,8 @@ The service uses the `drivers_license_no` field for duplicate detection.
 |----------|-------------|---------|
 | `SUPABASE_URL` | Your Supabase project URL | Required |
 | `SUPABASE_SERVICE_ROLE_KEY` | Service role key for database access | Required |
-| `CSV_FILE_PATH` | Path to the CSV file to monitor | `./scanner_data.csv` |
+| `CSV_FILE_PATH` | Path to the CSV file to monitor | `./test-scanner-data.csv` |
 | `CSV_POLLING_INTERVAL` | File polling interval in milliseconds | `1000` |
-| `BATCH_SIZE` | Number of records to process at once | `50` |
-| `RETRY_ATTEMPTS` | Number of retry attempts for failed operations | `3` |
-| `RETRY_DELAY` | Delay between retries in milliseconds | `5000` |
 | `LOG_LEVEL` | Logging level (error, warn, info, debug) | `info` |
 | `LOG_FILE_PATH` | Path to log file | `./logs/csv-sync.log` |
 
@@ -125,214 +118,174 @@ Example data:
 "JOSEPH EARL","SPERBER","","","12572 208TH TRCE","OBRIEN","FL","32071-2236","","","2017-12-01","S161485824200","2025-11-20","","SPERBER, JOSEPH EARL","2025/07/10 11:20:07 (Thu Jul 10)","","","1982-11-20","42","[DAR]: E [DAS]: A..."
 ```
 
+The **CREATED** field contains the timestamp when the entry was added to the CSV. The service uses this to identify the most recent entry.
+
 ## 🎯 Usage
 
-### Running as Development Service
+### Available NPM Commands
 
 ```powershell
-# Reset processed state (forces reprocessing of all CSV data)
-npm run reset-state
+# Install dependencies
+npm install
 
-# Test CSV format parsing
-npm run test-csv
-
-# Start in development mode with auto-restart
-npm run dev
-
-# Or start normally
+# Start the service in development mode
 npm start
 
-# Test the service
+# Test the service with sample data
 npm test
-```
 
-### Windows Service Management
+# Validate configuration
+npm run validate
 
-```powershell
+# Reset processed state (clears hash tracking)
+npm run reset-state
+
 # Install as Windows service
 npm run install-service
 
 # Uninstall Windows service
 npm run uninstall-service
-
-# Check service status
-sc query "PawnShopCSVSync"
-
-# Start/stop service manually
-net start "PawnShopCSVSync"
-net stop "PawnShopCSVSync"
 ```
 
-### Web Dashboard
+### Service Workflow
 
-1. Open `web-dashboard.html` in a web browser
-2. Update the Supabase configuration in the HTML file
-3. View real-time customer data and statistics
-4. Get notifications for new customers
+1. **Service monitors CSV file** for changes using chokidar
+2. **When file changes**, reads entire CSV and finds entry with latest timestamp
+3. **Processes the newest entry** if it hasn't been processed before (hash check)
+4. **Inserts customer data** into Supabase `customers_testing` table
+5. **Tracks processed entries** using hash-based state management
+
+### Windows Service Management
+
+After installation, manage the service using Windows tools:
+
+```powershell
+# Check service status
+sc query "pawnshopcsvsync.exe"
+
+# Start/stop service manually
+net start "pawnshopcsvsync.exe"
+net stop "pawnshopcsvsync.exe"
+
+# View services in Windows Services Manager
+services.msc
+```
 
 ## 📝 Logging
 
 The service provides comprehensive logging:
 
-- **File Logging**: Rotated log files in the specified directory
-- **Console Logging**: Colored output for development
+- **File Logging**: Rotated log files in the configured directory
+- **Console Logging**: Colored output for development mode
+- **Processing Details**: Shows which customers are being processed
 - **Error Tracking**: Detailed error information with stack traces
-- **Performance Metrics**: Processing times and statistics
 
 ### Log Locations
 
-- **Development**: Console and `./logs/csv-sync.log`
-- **Windows Service**: Windows Event Viewer and configured log file
-- **Log Rotation**: Automatic rotation at 5MB with 5 file retention
+- **Development Mode**: Console output and log file
+- **Windows Service**: Configured log file location
+- **Default Location**: `./logs/csv-sync.log`
 
 ## 🔍 Monitoring
 
 ### Service Health
 
-Check the service status programmatically:
+The service logs detailed information about:
+- File monitoring status
+- CSV processing results
+- Database connection status
+- Processed entry counts
+- Error conditions
 
-```javascript
-const service = new CSVSyncService();
-const status = service.getStatus();
-console.log(status);
-```
+### Processing Logic
 
-### Database Monitoring
-
-Use the provided SQL views for monitoring:
-
-```sql
--- Recent customers (last 24 hours)
-SELECT * FROM recent_customers;
-
--- Customer statistics
-SELECT * FROM customer_stats;
-
--- Find customer by license
-SELECT * FROM get_customer_by_license('D123456789');
-```
+The service uses a **latest timestamp approach**:
+1. **File change detected** → Triggers processing
+2. **Scan entire CSV** → Parse all CREATED timestamps
+3. **Find maximum timestamp** → Identifies newest entry
+4. **Check if processed** → Uses hash to avoid duplicates
+5. **Process if new** → Insert into database and update state
 
 ## 🚨 Error Handling
 
 The service includes robust error handling:
 
 - **File Access Errors**: Graceful handling of locked or missing files
-- **Database Errors**: Retry logic with exponential backoff
+- **Database Errors**: Retry logic for connection issues
 - **Data Validation**: Comprehensive validation of CSV data
-- **Network Issues**: Automatic reconnection to Supabase
-- **Memory Management**: Efficient processing of large files
+- **Duplicate Handling**: PostgreSQL unique constraint support
+- **State Management**: Persistent tracking across service restarts
 
 ## 🔐 Security
 
-- **Row Level Security**: Enabled on the customers table
+- **Row Level Security**: Enabled on database tables
 - **Service Role**: Uses Supabase service role for secure access
 - **Input Validation**: All CSV data is validated before insertion
-- **SQL Injection Prevention**: Parameterized queries only
-- **Access Control**: Limited permissions for authenticated users
+- **Parameterized Queries**: Prevents SQL injection
+- **Hash-based Tracking**: Secure duplicate detection
 
 ## 🛠️ Troubleshooting
 
 ### Common Issues
 
 1. **Service won't start**
-   - Check `.env` configuration
-   - Verify Supabase credentials
-   - Ensure CSV file path is accessible
+   ```powershell
+   npm run validate  # Check configuration
+   ```
 
 2. **CSV file not being processed**
+   - Verify file path in `.env`
    - Check file permissions
-   - Verify polling interval
-   - Review log files for errors
+   - Review log files
 
 3. **Database connection issues**
    - Verify Supabase URL and keys
-   - Check network connectivity
-   - Review RLS policies
+   - Test connection: `npm test`
 
-4. **Duplicate customers**
-   - Verify driver's license number format
-   - Check duplicate detection logic
-   - Review existing customer data
+4. **State management issues**
+   ```powershell
+   npm run reset-state  # Clear processed entries
+   ```
 
 ### Debug Mode
 
-Enable debug logging for detailed information:
-
+Enable debug logging:
 ```env
 LOG_LEVEL=debug
 ```
 
-### Service Logs
+## 🤝 Integration
 
-View Windows service logs:
+### Workflow Integration
 
-```powershell
-# View in Event Viewer
-eventvwr.msc
+This service is designed for pawn shop operations:
 
-# Or check log file
-Get-Content "C:\PawnShop\logs\csv-sync.log" -Tail 50
-```
+1. **ID Scanner** → Adds new customer to CSV (sorted alphabetically)
+2. **CSV Sync Service** → Detects newest entry and syncs to `customers_testing`  
+3. **Employee Review** → Uses web interface to review and edit customer data
+4. **Final Processing** → Moves approved customers to main `customers` table
 
-## 🤝 Integration Examples
+### Real-time Updates
 
-### Adding Custom Fields
-
-To add custom fields to the customer data:
-
-1. Update the database schema
-2. Modify the `transformCustomerData` method
-3. Update the CSV column mapping
-
-### Real-time Notifications
-
-The web dashboard includes real-time notifications. To extend this:
-
-```javascript
-// Subscribe to customer updates
-const subscription = supabase
-  .channel('customers')
-  .on('postgres_changes', {
-    event: 'INSERT',
-    schema: 'public',
-    table: 'customers'
-  }, (payload) => {
-    // Handle new customer
-    console.log('New customer:', payload.new);
-  })
-  .subscribe();
-```
-
-### API Integration
-
-Create RESTful endpoints using Supabase:
-
-```javascript
-// Get recent customers
-const { data } = await supabase
-  .from('customers')
-  .select('*')
-  .order('synced_at', { ascending: false })
-  .limit(10);
-```
+The service integrates with Supabase real-time features:
+- **Instant synchronization** to database
+- **Real-time subscriptions** for web interfaces
+- **Event-driven architecture** for notifications
 
 ## 📈 Performance
 
 The service is optimized for:
 
-- **Large Files**: Efficient streaming and batch processing
-- **Real-time Processing**: Fast file change detection
-- **Memory Usage**: Minimal memory footprint
-- **Database Performance**: Indexed queries and optimized schema
+- **Efficient file monitoring** with configurable polling intervals
+- **Minimal processing overhead** by only processing latest entries
+- **Memory efficient** hash-based state management
+- **Fast database operations** with indexed queries
 
 ### Performance Tuning
 
-Adjust these settings for your environment:
-
 ```env
-BATCH_SIZE=100          # Increase for better throughput
-CSV_POLLING_INTERVAL=500 # Decrease for faster detection
-RETRY_ATTEMPTS=5        # Increase for unreliable networks
+CSV_POLLING_INTERVAL=500  # Faster change detection
+LOG_LEVEL=warn           # Reduce logging overhead
 ```
 
 ## 📄 License
@@ -341,13 +294,13 @@ MIT License - see the LICENSE file for details.
 
 ## 🆘 Support
 
-For issues and questions:
+For troubleshooting:
 
-1. Check the troubleshooting section
-2. Review log files
-3. Verify configuration
-4. Test with the provided test script
+1. **Run configuration validator**: `npm run validate`
+2. **Check logs**: Review log files for errors
+3. **Test with sample data**: `npm test`
+4. **Reset state if needed**: `npm run reset-state`
 
 ---
 
-**Note**: This service is designed specifically for Windows environments and requires administrative privileges for service installation.
+**Note**: This service is designed for Windows environments and requires administrative privileges for service installation.
